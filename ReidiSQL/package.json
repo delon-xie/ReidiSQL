@@ -1,0 +1,50 @@
+{
+  "name": "reidisql",
+  "version": "0.0.1",
+  "private": true,
+  "description": "ReidiSQL - 现代化跨平台数据库管理工具",
+  "author": "ReidiSQL Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/reidisql.git"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:tauri\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd node-backend && npm run dev",
+    "dev:tauri": "cd src-tauri && cargo tauri dev",
+    "build": "npm run build:frontend && npm run build:backend && npm run build:tauri",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd node-backend && npm run build",
+    "build:tauri": "cd src-tauri && cargo tauri build",
+    "test": "npm run test:frontend && npm run test:backend",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd node-backend && npm test",
+    "test:e2e": "cd frontend && npm run test:e2e",
+    "lint": "npm run lint:frontend && npm run lint:backend",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:backend": "cd node-backend && npm run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "husky": "^9.0.11",
+    "lint-staged": "^15.2.2",
+    "prettier": "^3.2.5"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  }
+}

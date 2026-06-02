@@ -1,0 +1,1009 @@
+openapi: 3.0.3
+info:
+  title: ReidiSQL API
+  version: 1.0.0
+  description: ReidiSQL Node.js Backend API - 数据库管理工具后端接口
+  contact:
+    name: ReidiSQL Team
+servers:
+  - url: http://127.0.0.1:3001/api/v1
+    description: Local development server
+
+# ===== 安全 =====
+security:
+  - tokenAuth: []
+
+components:
+  securitySchemes:
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: X-Auth-Token
+
+  # ===== 通用响应 =====
+  schemas:
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: string
+            errorCode:
+              type: integer
+            sqlState:
+              type: string
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+          default: 50
+        offset:
+          type: integer
+          default: 0
+        sortBy:
+          type: string
+        sortOrder:
+          type: string
+          enum: [asc, desc]
+
+  # ===== 通用参数 =====
+  parameters:
+    connectionId:
+      name: connectionId
+      in: path
+      required: true
+      schema:
+        type: string
+    database:
+      name: database
+      in: path
+      required: true
+      schema:
+        type: string
+    table:
+      name: table
+      in: path
+      required: true
+      schema:
+        type: string
+
+# ===================================================================
+# PATHS
+# ===================================================================
+paths:
+
+  # ==================== 连接管理 ====================
+  /connections:
+    get:
+      summary: 获取连接列表
+      tags: [Connections]
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [mysql, mariadb, postgresql, sqlite]
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 连接列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConnectionInfo'
+
+    post:
+      summary: 创建连接
+      tags: [Connections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConnectionInput'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/ConnectionInfo'
+
+  /connections/test:
+    post:
+      summary: 测试连接
+      tags: [Connections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConnectionInput'
+      responses:
+        '200':
+          description: 测试结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      connected: { type: boolean }
+                      serverVersion: { type: string }
+                      serverType: { type: string }
+                      responseTime: { type: integer }
+                      error: { type: string }
+
+  /connections/{connectionId}:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    put:
+      summary: 更新连接
+      tags: [Connections]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConnectionInput'
+      responses:
+        '200':
+          description: 更新成功
+    delete:
+      summary: 删除连接
+      tags: [Connections]
+      responses:
+        '204':
+          description: 删除成功
+
+  /connections/{connectionId}/connect:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    post:
+      summary: 建立连接
+      tags: [Connections]
+      responses:
+        '200':
+          description: 连接成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      serverVersion: { type: string }
+                      serverType: { type: string }
+                      databases:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DatabaseInfo'
+
+  /connections/{connectionId}/disconnect:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    post:
+      summary: 断开连接
+      tags: [Connections]
+      responses:
+        '200':
+          description: 断开成功
+
+  /connections/{connectionId}/status:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    get:
+      summary: 连接状态
+      tags: [Connections]
+      responses:
+        '200':
+          description: 状态信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [disconnected, connecting, connected, error, reconnecting]
+                      serverVersion: { type: string }
+                      uptime: { type: integer }
+
+  # ==================== 查询执行 ====================
+  /query/execute:
+    post:
+      summary: 执行查询
+      tags: [Query]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connectionId, sql]
+              properties:
+                connectionId: { type: string }
+                database: { type: string }
+                sql: { type: string }
+                params:
+                  type: array
+                  items: {}
+                options:
+                  type: object
+                  properties:
+                    limit: { type: integer, default: 1000 }
+                    timeout: { type: integer }
+                    explain: { type: boolean }
+      responses:
+        '200':
+          description: 查询结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/QueryResult'
+
+  /query/{queryId}/cancel:
+    parameters:
+      - name: queryId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: 取消查询
+      tags: [Query]
+      responses:
+        '200':
+          description: 取消成功
+
+  /query/history:
+    get:
+      summary: 查询历史
+      tags: [Query]
+      parameters:
+        - name: connectionId
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: 历史列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/QueryHistoryItem'
+
+  # ==================== 元数据 ====================
+  /metadata/{connectionId}/databases:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    get:
+      summary: 获取数据库列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 数据库列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DatabaseInfo'
+
+    post:
+      summary: 创建数据库
+      tags: [Metadata]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                charset: { type: string, default: utf8mb4 }
+                collation: { type: string }
+      responses:
+        '201':
+          description: 创建成功
+
+  /metadata/{connectionId}/databases/{database}/tables:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+    get:
+      summary: 获取表列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 表列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TableMeta'
+
+  /metadata/{connectionId}/databases/{database}/tables/{table}/columns:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    get:
+      summary: 获取列信息
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 列列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ColumnMeta'
+
+  /metadata/{connectionId}/databases/{database}/tables/{table}/indexes:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    get:
+      summary: 获取索引信息
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 索引列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/IndexMeta'
+
+  /metadata/{connectionId}/databases/{database}/tables/{table}/foreign-keys:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    get:
+      summary: 获取外键信息
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 外键列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ForeignKeyMeta'
+
+  /metadata/{connectionId}/databases/{database}/tables/{table}/create-sql:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    get:
+      summary: 获取表 CREATE 语句
+      tags: [Metadata]
+      responses:
+        '200':
+          description: CREATE TABLE SQL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      createSql: { type: string }
+
+  /metadata/{connectionId}/databases/{database}/tables/{table}:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    put:
+      summary: 修改表结构 (ALTER TABLE)
+      tags: [Metadata]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableDDLRequest'
+      responses:
+        '200':
+          description: 修改成功
+    delete:
+      summary: 删除表
+      tags: [Metadata]
+      responses:
+        '204':
+          description: 删除成功
+
+  /metadata/{connectionId}/databases/{database}/views:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+    get:
+      summary: 获取视图列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 视图列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ViewMeta'
+
+  /metadata/{connectionId}/databases/{database}/routines:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+    get:
+      summary: 获取存储过程/函数列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 例程列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RoutineMeta'
+
+  /metadata/{connectionId}/databases/{database}/triggers:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+    get:
+      summary: 获取触发器列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 触发器列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TriggerMeta'
+
+  /metadata/{connectionId}/databases/{database}/events:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+    get:
+      summary: 获取事件列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 事件列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EventMeta'
+
+  /metadata/{connectionId}/server-info:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    get:
+      summary: 服务器信息
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 服务器信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      version: { type: string }
+                      versionNumeric: { type: integer }
+                      type: { type: string }
+                      uptime: { type: integer }
+                      charset: { type: string }
+                      collation: { type: string }
+
+  /metadata/{connectionId}/variables:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    get:
+      summary: 服务器变量
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 变量列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ServerVariable'
+
+  /metadata/{connectionId}/processes:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    get:
+      summary: 进程列表
+      tags: [Metadata]
+      responses:
+        '200':
+          description: 进程列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ServerProcess'
+
+  # ==================== 数据操作 ====================
+  /data/{connectionId}/{database}/{table}:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    post:
+      summary: 插入数据
+      tags: [Data]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows]
+              properties:
+                rows:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: 插入成功
+    put:
+      summary: 更新数据
+      tags: [Data]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows, where]
+              properties:
+                rows:
+                  type: array
+                  items:
+                    type: object
+                where:
+                  type: object
+      responses:
+        '200':
+          description: 更新成功
+    delete:
+      summary: 删除数据
+      tags: [Data]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [where]
+              properties:
+                where:
+                  type: object
+      responses:
+        '200':
+          description: 删除成功
+
+  # ==================== 导入导出 ====================
+  /export:
+    post:
+      summary: 导出数据
+      tags: [ImportExport]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '200':
+          description: 导出文件下载
+        '202':
+          description: 异步导出（通过 WS 推送进度）
+
+  /import/{connectionId}/{database}/{table}:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - $ref: '#/components/parameters/database'
+      - $ref: '#/components/parameters/table'
+    post:
+      summary: 导入数据
+      tags: [ImportExport]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                format:
+                  type: string
+                  enum: [csv, sql, json]
+                options:
+                  type: string
+                  description: JSON 字符串
+      responses:
+        '200':
+          description: 导入结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/ImportResult'
+
+  # ==================== SSH 隧道 ====================
+  /ssh/tunnel:
+    post:
+      summary: 创建 SSH 隧道
+      tags: [SSH]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, port, username, remoteHost, remotePort]
+              properties:
+                host: { type: string }
+                port: { type: integer }
+                username: { type: string }
+                password: { type: string }
+                privateKey: { type: string }
+                remoteHost: { type: string }
+                remotePort: { type: integer }
+      responses:
+        '200':
+          description: 隧道创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      tunnelId: { type: string }
+                      localPort: { type: integer }
+                      status: { type: string }
+
+  /ssh/tunnel/{tunnelId}:
+    parameters:
+      - name: tunnelId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: 关闭 SSH 隧道
+      tags: [SSH]
+      responses:
+        '204':
+          description: 关闭成功
+
+  # ==================== 用户管理 ====================
+  /admin/{connectionId}/users:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+    get:
+      summary: 用户列表
+      tags: [Admin]
+      responses:
+        '200':
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserInfo'
+
+    post:
+      summary: 创建用户
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: 创建成功
+
+  /admin/{connectionId}/users/{user}:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - name: user
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      summary: 修改用户
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '200':
+          description: 修改成功
+    delete:
+      summary: 删除用户
+      tags: [Admin]
+      responses:
+        '204':
+          description: 删除成功
+
+  /admin/{connectionId}/users/{user}/privileges:
+    parameters:
+      - $ref: '#/components/parameters/connectionId'
+      - name: user
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: 获取用户权限
+      tags: [Admin]
+      responses:
+        '200':
+          description: 权限列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PrivilegeGrant'
+    put:
+      summary: 修改权限 (GRANT/REVOKE)
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                grant:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PrivilegeGrant'
+                revoke:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PrivilegeGrant'
+      responses:
+        '200':
+          description: 修改成功
+
+  # ==================== 偏好设置 ====================
+  /preferences:
+    get:
+      summary: 读取偏好设置
+      tags: [Preferences]
+      security: []
+      responses:
+        '200':
+          description: 偏好设置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/AppPreferences'
+    put:
+      summary: 更新偏好设置
+      tags: [Preferences]
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppPreferences'
+      responses:
+        '200':
+          description: 更新成功
+
+  # ==================== 工具 ====================
+  /tools/maintenance:
+    post:
+      summary: 表维护
+      tags: [Tools]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaintenanceRequest'
+      responses:
+        '200':
+          description: 维护结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MaintenanceResult'
+
+  /tools/find:
+    post:
+      summary: 表内容搜索
+      tags: [Tools]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connectionId, database, tables, searchText]
+              properties:
+                connectionId: { type: string }
+                database: { type: string }
+                tables:
+                  type: array
+                  items: { type: string }
+                searchText: { type: string }
+                matchType:
+                  type: string
+                  enum: [exact, contains, starts_with, ends_with, regex]
+                dataTypes:
+                  type: array
+                  items:
+                    type: string
+                    enum: [string, number, date, binary]
+      responses:
+        '200':
+          description: 搜索结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        table: { type: string }
+                        column: { type: string }
+                        primaryKey: { type: string }
+                        matchValue: { type: string }
+                        rowCount: { type: integer }
