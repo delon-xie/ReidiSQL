@@ -1,15 +1,20 @@
 /**
  * 连接配置持久化存储
  * 使用 JSON 文件存储连接配置到 ~/.reidisql/connections.json
+ * 密码字段自动使用 AES-256-GCM 加密存储
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
+import { encrypt, decrypt, isEncrypted, EncryptedPayload } from '../utils/crypto.js';
 
 const APP_DIR = join(homedir(), '.reidisql');
 const CONNECTIONS_FILE = join(APP_DIR, 'connections.json');
+
+/** 敏感字段值类型：可能是明文（旧版兼容）或加密载荷 */
+type SecretValue = string | EncryptedPayload | undefined;
 
 export interface StoredConnection {
   id: string;
@@ -46,6 +51,51 @@ export interface StoredConnection {
   lastConnectedAt?: string;
 }
 
+/** 加密单个敏感字段（如果非空） */
+function encryptField(value: string | undefined): SecretValue {
+  if (!value) return undefined;
+  return encrypt(value);
+}
+
+/** 解密单个敏感字段（兼容旧版明文） */
+function decryptField(value: SecretValue): string | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'string') return value; // 旧版明文兼容
+  if (isEncrypted(value)) {
+    try {
+      return decrypt(value);
+    } catch (err: any) {
+      logger.warn(`Failed to decrypt field: ${err.message}`);
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** 对连接配置中的敏感字段加密（用于持久化） */
+function encryptConnection(conn: StoredConnection): any {
+  return {
+    ...conn,
+    password: encryptField(conn.password),
+    ssh: conn.ssh ? {
+      ...conn.ssh,
+      password: encryptField(conn.ssh.password),
+    } : undefined,
+  };
+}
+
+/** 对连接配置中的敏感字段解密（用于内存使用） */
+function decryptConnection(raw: any): StoredConnection {
+  return {
+    ...raw,
+    password: decryptField(raw.password),
+    ssh: raw.ssh ? {
+      ...raw.ssh,
+      password: decryptField(raw.ssh.password),
+    } : undefined,
+  } as StoredConnection;
+}
+
 export class ConfigStore {
   private connections: Map<string, StoredConnection> = new Map();
   private initialized = false;
@@ -68,7 +118,9 @@ export class ConfigStore {
       if (existsSync(CONNECTIONS_FILE)) {
         const data = JSON.parse(readFileSync(CONNECTIONS_FILE, 'utf-8'));
         if (Array.isArray(data)) {
-          for (const conn of data) {
+          for (const raw of data) {
+            // 自动解密敏感字段（兼容旧版明文）
+            const conn = decryptConnection(raw);
             this.connections.set(conn.id, conn);
           }
         }
@@ -82,7 +134,8 @@ export class ConfigStore {
 
   private save(): void {
     try {
-      const data = Array.from(this.connections.values());
+      // 加密敏感字段后写入
+      const data = Array.from(this.connections.values()).map(encryptConnection);
       writeFileSync(CONNECTIONS_FILE, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
       logger.error(`Failed to save connections config: ${err}`);

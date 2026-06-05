@@ -17,7 +17,7 @@
 
 ## 🔴 P0 - 必须补齐（影响架构安全与可用）
 
-### [ ] 1. Tauri 启动 Node.js 子进程
+### [x] 1. Tauri 启动 Node.js 子进程
 
 - **所属**：进程模型 / 进程生命周期管理
 - **背景**：架构设计文档第 3.2 节要求 Main Process（Tauri）托管 Node.js Service
@@ -29,11 +29,11 @@
   - Token 协商（与缺口 #2 联动）
   - 崩溃监控与自动重启
 - **预计涉及文件**：`src-tauri/src/main.rs`、`src-tauri/Cargo.toml`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（tokio::process::Command + READY 信号 + AppState 管理）
 
 ---
 
-### [ ] 2. 随机端口 + Token 认证
+### [x] 2. 随机端口 + Token 认证
 
 - **所属**：安全设计 / 进程间通信
 - **背景**：架构设计文档第 6 节"安全设计"明确要求
@@ -48,11 +48,11 @@
   - 所有 HTTP 请求校验 `Authorization: Bearer <token>`
   - Tauri 侧统一封装 HTTP 客户端自动注入 Token
 - **预计涉及文件**：`node-backend/src/index.ts`、`src-tauri/src/main.rs`、`frontend/src/lib/api.ts`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（REIDISQL_PORT/REIDISQL_TOKEN 环境变量 + Bearer 中间件 + axios 拦截器）
 
 ---
 
-### [ ] 3. 密码加密存储
+### [x] 3. 密码加密存储
 
 - **所属**：安全设计 / 配置持久化
 - **背景**：架构设计文档第 6 节"安全设计"要求保护用户连接密码
@@ -67,13 +67,13 @@
   - 或使用 Tauri `stronghold` 插件
   - 加密单元：`{ iv, ciphertext, authTag }` 一并持久化
 - **预计涉及文件**：`node-backend/src/services/configStore.ts`、`shared/types.ts`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（AES-256-GCM + masterkey + configStore 自动加解密）
 
 ---
 
 ## 🟡 P1 - 强烈建议（影响架构纯粹性）
 
-### [ ] 4. 统一驱动接口抽象
+### [x] 4. 统一驱动接口抽象
 
 - **所属**：数据访问层 / 设计模式
 - **背景**：架构设计文档第 4.1.1 节定义了 `DatabaseDriver` 接口范式
@@ -95,11 +95,11 @@
   - 通过 `DriverFactory` 注入到 `ConnectionManager`
   - 消除 if-else 类型分支
 - **预计涉及文件**：`node-backend/src/services/connectionService.ts`、`node-backend/src/drivers/*`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（DatabaseDriver 接口 + MysqlDriver/PgDriver/SqliteDriver + DriverFactory）
 
 ---
 
-### [ ] 5. React Query 集成
+### [x] 5. React Query 集成
 
 - **所属**：状态管理 / 服务端缓存
 - **背景**：架构设计文档第 2.3 节"状态管理"明确将 React Query 列为服务端状态方案
@@ -113,11 +113,11 @@
     - 元数据获取
   - 保留 Zustand 负责纯客户端状态（UI 开关、当前选中 tab 等）
 - **预计涉及文件**：`frontend/src/main.tsx`、`frontend/src/components/*`、`frontend/src/hooks/*`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（QueryClientProvider + useConnections/useMetadata/useQueryExecution hooks）
 
 ---
 
-### [ ] 6. 大结果集流式返回
+### [x] 6. 大结果集流式返回
 
 - **所属**：性能设计 / 数据访问
 - **背景**：架构设计文档第 7 节"性能设计"要求流畅处理百万级数据
@@ -130,11 +130,11 @@
   - 前端：AG-Grid 启用 `rowModelType: 'infinite'` / `serverSide`
   - 支持查询取消（AbortController）
 - **预计涉及文件**：`node-backend/src/services/queryService.ts`、`frontend/src/components/DataGrid.tsx`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（NDJSON 流式路由 + mysql2 callback API + 前端 async generator）
 
 ---
 
-### [ ] 7. Commitlint 配置
+### [x] 7. Commitlint 配置
 
 - **所属**：工程化 / 提交规范
 - **背景**：架构设计文档第 2.6 节"开发和测试"明确要求
@@ -146,7 +146,7 @@
   - 在 Husky 中添加 `commit-msg` 钩子：`npx --no-install commitlint --edit "$1"`
   - 在 [package.json](../../ReidiSQL/package.json) 的 husky 区段完善
 - **预计涉及文件**：根 `package.json`、`.husky/commit-msg`、`commitlint.config.js`
-- **状态**：⬜ 待开始
+- **状态**：✅ 已完成（commitlint.config.js + .husky/commit-msg + @commitlint/config-conventional）
 
 ---
 
@@ -207,18 +207,18 @@
 
 ### 完成度统计
 
-- P0：0 / 3 (0%)
-- P1：0 / 4 (0%)
-- P2：0 / 3 (0%)
-- **总进度**：0 / 10 (0%)
+- P0：3 / 3 (100%) ✅
+- P1：4 / 4 (100%) ✅
+- P2：0 / 3 (0%) ⬜
+- **总进度**：7 / 10 (70%)
 
 ### 推荐执行顺序
 
-1. **Sprint 1 收尾阶段**：#1（Tauri 启动 Node.js）+ #2（随机端口 + Token）一并完成
-2. **Sprint 2 重构窗口**：#4（驱动接口抽象）+ #5（React Query 集成）
-3. **Sprint 2-3 性能优化**：#6（流式返回）+ #3（密码加密）
-4. **Sprint 3 工程化**：#7（Commitlint）+ #10（日志分级）
-5. **Sprint 4+ 生态建设**：#8（插件系统）+ #9（更新器）
+1. ~~**Sprint 1 收尾阶段**：#1（Tauri 启动 Node.js）+ #2（随机端口 + Token）一并完成~~ ✅
+2. ~~**Sprint 2 重构窗口**：#4（驱动接口抽象）+ #5（React Query 集成）~~ ✅
+3. ~~**Sprint 2-3 性能优化**：#6（流式返回）+ #3（密码加密）~~ ✅
+4. ~~**Sprint 3 工程化**：#7（Commitlint）~~ ✅ + #10（日志分级）⬜
+5. **Sprint 4+ 生态建设**：#8（插件系统）+ #9（更新器）⬜
 
 ---
 

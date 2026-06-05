@@ -59,8 +59,16 @@ ReidiSQL/
 ### 第四步：开始开发
 
 ```bash
-# 启动开发环境
-npm run dev
+cd ReidiSQL
+
+   # 终端 1: 前端
+   cd frontend && npm run dev
+
+   # 终端 2: Node.js 后端
+   cd node-backend && npm run dev
+
+   # 终端 3: Tauri 应用
+   cd src-tauri && cargo tauri dev
 
 # 运行测试
 npm test

@@ -6,13 +6,26 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { connectionRoutes } from './routes/connections.js';
 import { queryRoutes } from './routes/queries.js';
 import { metadataRoutes } from './routes/metadata.js';
+import ddlRoutes from './routes/ddl.js';
+import dataRoutes from './routes/data.js';
+import exportRoutes from './routes/export.js';
+import importRoutes from './routes/import.js';
+import objectsRoutes from './routes/objects.js';
+import adminRoutes from './routes/admin.js';
+import preferencesRoutes from './routes/preferences.js';
+import toolsRoutes from './routes/tools.js';
+import updateRoutes from './routes/update.js';
+import serverRoutes from './routes/server.js';
 import { logger } from './utils/logger.js';
 import { getConnectionManager } from './services/connectionService.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3001', 10);
+// 端口：优先读取 Tauri 传入的 REIDISQL_PORT，否则使用 PORT 或默认 3001
+const PORT = parseInt(process.env.REIDISQL_PORT || process.env.PORT || '3001', 10);
+// Token：Tauri 启动时生成并传入；开发模式下可不设置（跳过认证）
+const AUTH_TOKEN = process.env.REIDISQL_TOKEN || process.env.AUTH_TOKEN || '';
 
 // 中间件
 app.use(cors({
@@ -21,6 +34,22 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Token 认证中间件（仅当 AUTH_TOKEN 存在时启用）
+if (AUTH_TOKEN) {
+  app.use((req, res, next) => {
+    // 健康检查豁免
+    if (req.path === '/api/health') return next();
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${AUTH_TOKEN}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  });
+  logger.info('Token authentication enabled');
+} else {
+  logger.warn('No AUTH_TOKEN set — running without authentication (dev mode)');
+}
 
 // 请求日志
 app.use((req, _res, next) => {
@@ -32,6 +61,16 @@ app.use((req, _res, next) => {
 app.use('/api/connections', connectionRoutes);
 app.use('/api/queries', queryRoutes);
 app.use('/api/metadata', metadataRoutes);
+app.use('/api/ddl', ddlRoutes);
+app.use('/api/data', dataRoutes);
+app.use('/api/export', exportRoutes);
+app.use('/api/import', importRoutes);
+app.use('/api/objects', objectsRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/preferences', preferencesRoutes);
+app.use('/api/tools', toolsRoutes);
+app.use('/api/update', updateRoutes);
+app.use('/api/server', serverRoutes);
 
 // 健康检查
 app.get('/api/health', (_req, res) => {
@@ -39,7 +78,7 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    version: '0.1.0-sprint1',
+    version: '0.6.0-sprint6',
   });
 });
 
@@ -95,10 +134,15 @@ export function broadcast(event: string, data: any): void {
 
 // 启动服务器
 server.listen(PORT, () => {
-  logger.info(`ReidiSQL Backend v0.1.0-sprint1`);
+  logger.info(`ReidiSQL Backend v0.6.0-sprint6`);
   logger.info(`HTTP  : http://localhost:${PORT}/api`);
   logger.info(`WS    : ws://localhost:${PORT}/ws`);
   logger.info(`Health: http://localhost:${PORT}/api/health`);
+  if (AUTH_TOKEN) logger.info(`Auth  : Bearer Token required`);
+  
+  // 输出 READY 信号供 Tauri 主进程解析（格式：READY:{"port":N,"token":"xxx"}）
+  // 使用 process.stdout.write 避免 winston 格式干扰
+  process.stdout.write(`READY:${JSON.stringify({ port: PORT, token: AUTH_TOKEN || null })}\n`);
 });
 
 // 优雅关闭

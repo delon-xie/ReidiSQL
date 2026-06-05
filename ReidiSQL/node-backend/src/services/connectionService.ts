@@ -1,6 +1,6 @@
 /**
  * 数据库连接管理服务
- * 管理真实的数据库连接池，支持 MySQL/MariaDB、PostgreSQL、SQLite
+ * 管理真实的数据库连接池，通过 DriverFactory 委托给具体驱动实现
  */
 
 import mysql from 'mysql2/promise';
@@ -8,24 +8,17 @@ import pg from 'pg';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger.js';
 import { ConfigStore, StoredConnection } from './configStore.js';
+import { getDriver } from '../drivers/DriverFactory.js';
+import type { TestResult } from '../drivers/DatabaseDriver.js';
 
 /** 活跃连接包装器 */
 interface ActiveConnection {
   id: string;
   config: StoredConnection;
   type: 'mysql' | 'postgresql' | 'sqlite';
-  pool: mysql.Pool | pg.Pool | Database.Database;
+  pool: any; // 驱动特定的连接池对象
   serverVersion: string;
   connectedAt: string;
-}
-
-/** 连接测试结果 */
-interface TestResult {
-  connected: boolean;
-  serverVersion?: string;
-  serverType?: string;
-  responseTime?: number;
-  error?: string;
 }
 
 /** 连接信息（不含密码） */
@@ -55,6 +48,12 @@ function categorizeMySQLType(type: string): string {
   return 'other';
 }
 
+/** 规范化连接类型为 ActiveConnection type */
+function normalizeActiveType(type: string): 'mysql' | 'postgresql' | 'sqlite' {
+  if (type === 'mariadb') return 'mysql';
+  return type as 'mysql' | 'postgresql' | 'sqlite';
+}
+
 export class ConnectionManager {
   private configStore: ConfigStore;
   private activeConnections: Map<string, ActiveConnection> = new Map();
@@ -78,7 +77,6 @@ export class ConnectionManager {
   }
 
   deleteConnection(id: string): boolean {
-    // 如果连接活跃，先断开
     if (this.activeConnections.has(id)) {
       this.disconnect(id);
     }
@@ -97,20 +95,20 @@ export class ConnectionManager {
     if (!config) throw new Error(`Connection not found: ${id}`);
 
     const startTime = Date.now();
-    logger.info(`Connecting to ${config.name} (${config.type})...`);
+    const driver = getDriver(config.type);
+    logger.info(`Connecting to ${config.name} (${config.type}) via ${driver.name}...`);
 
     try {
-      let active: ActiveConnection;
+      const result = await driver.connect(config);
 
-      if (config.type === 'mysql' || config.type === 'mariadb') {
-        active = await this.connectMySQL(config);
-      } else if (config.type === 'postgresql') {
-        active = await this.connectPostgreSQL(config);
-      } else if (config.type === 'sqlite') {
-        active = await this.connectSQLite(config);
-      } else {
-        throw new Error(`Unsupported database type: ${config.type}`);
-      }
+      const active: ActiveConnection = {
+        id: config.id,
+        config,
+        type: normalizeActiveType(config.type),
+        pool: result.pool,
+        serverVersion: result.serverVersion,
+        connectedAt: new Date().toISOString(),
+      };
 
       this.activeConnections.set(id, active);
       this.configStore.touchConnected(id);
@@ -119,7 +117,7 @@ export class ConnectionManager {
       logger.info(`Connected to ${config.name} in ${elapsed}ms (v${active.serverVersion})`);
 
       // 获取数据库列表
-      const databases = await this.getDatabases(id);
+      const databases = await driver.getDatabases(result.pool);
       return { serverVersion: active.serverVersion, databases };
     } catch (err: any) {
       logger.error(`Failed to connect to ${config.name}: ${err.message}`);
@@ -132,13 +130,8 @@ export class ConnectionManager {
     if (!active) return;
 
     try {
-      if (active.type === 'mysql') {
-        await (active.pool as mysql.Pool).end();
-      } else if (active.type === 'postgresql') {
-        await (active.pool as pg.Pool).end();
-      } else if (active.type === 'sqlite') {
-        (active.pool as Database.Database).close();
-      }
+      const driver = getDriver(active.config.type);
+      await driver.disconnect(active.pool);
       logger.info(`Disconnected: ${active.config.name}`);
     } catch (err: any) {
       logger.warn(`Error disconnecting ${active.config.name}: ${err.message}`);
@@ -162,150 +155,10 @@ export class ConnectionManager {
   // ==================== 测试连接 ====================
 
   async testConnection(input: any): Promise<TestResult> {
-    const startTime = Date.now();
-
-    try {
-      if (input.type === 'mysql' || input.type === 'mariadb') {
-        const conn = await mysql.createConnection({
-          host: input.host,
-          port: input.port || 3306,
-          user: input.username,
-          password: input.password,
-          database: input.database,
-          connectTimeout: input.options?.connectTimeout || 10000,
-          charset: input.options?.charset || 'utf8mb4',
-          ssl: input.ssl?.enabled ? {
-            ca: input.ssl.ca,
-            cert: input.ssl.cert,
-            key: input.ssl.key,
-          } : undefined,
-        });
-        const [rows] = await conn.query('SELECT VERSION() as version');
-        const version = (rows as any)[0].version;
-        await conn.end();
-        return {
-          connected: true,
-          serverVersion: version,
-          serverType: version.includes('MariaDB') ? 'MariaDB' : 'MySQL',
-          responseTime: Date.now() - startTime,
-        };
-      } else if (input.type === 'postgresql') {
-        const client = new pg.Client({
-          host: input.host,
-          port: input.port || 5432,
-          user: input.username,
-          password: input.password,
-          database: input.database || 'postgres',
-          connectionTimeoutMillis: input.options?.connectTimeout || 10000,
-        });
-        await client.connect();
-        const res = await client.query('SELECT version()');
-        const version = res.rows[0].version;
-        await client.end();
-        return {
-          connected: true,
-          serverVersion: version,
-          serverType: 'PostgreSQL',
-          responseTime: Date.now() - startTime,
-        };
-      } else if (input.type === 'sqlite') {
-        const db = new Database(input.host || ':memory:', { readonly: true });
-        const version = db.pragma('compile_options', { simple: true }) as string;
-        db.close();
-        return {
-          connected: true,
-          serverVersion: String(version),
-          serverType: 'SQLite',
-          responseTime: Date.now() - startTime,
-        };
-      }
-      return { connected: false, error: `Unsupported type: ${input.type}` };
-    } catch (err: any) {
-      return {
-        connected: false,
-        error: err.message,
-        responseTime: Date.now() - startTime,
-      };
-    }
-  }
-
-  // ==================== 内部连接方法 ====================
-
-  private async connectMySQL(config: StoredConnection): Promise<ActiveConnection> {
-    const pool = mysql.createPool({
-      host: config.host,
-      port: config.port || 3306,
-      user: config.username,
-      password: config.password,
-      database: config.database,
-      charset: config.options?.charset || 'utf8mb4',
-      connectTimeout: config.options?.connectTimeout || 10000,
-      waitForConnections: true,
-      connectionLimit: 5,
-      multipleStatements: true,
-      ssl: config.ssl?.enabled ? {
-        ca: config.ssl.ca,
-        cert: config.ssl.cert,
-        key: config.ssl.key,
-      } : undefined,
-    });
-
-    // 验证连接
-    const conn = await pool.getConnection();
-    const [rows] = await conn.query('SELECT VERSION() as version');
-    const version = (rows as any)[0].version;
-    conn.release();
-
-    return {
-      id: config.id,
-      config,
-      type: 'mysql',
-      pool,
-      serverVersion: version,
-      connectedAt: new Date().toISOString(),
-    };
-  }
-
-  private async connectPostgreSQL(config: StoredConnection): Promise<ActiveConnection> {
-    const pool = new pg.Pool({
-      host: config.host,
-      port: config.port || 5432,
-      user: config.username,
-      password: config.password,
-      database: config.database || 'postgres',
-      connectionTimeoutMillis: config.options?.connectTimeout || 10000,
-      max: 5,
-    });
-
-    // 验证连接
-    const client = await pool.connect();
-    const res = await client.query('SELECT version()');
-    const version = res.rows[0].version;
-    client.release();
-
-    return {
-      id: config.id,
-      config,
-      type: 'postgresql',
-      pool,
-      serverVersion: version,
-      connectedAt: new Date().toISOString(),
-    };
-  }
-
-  private async connectSQLite(config: StoredConnection): Promise<ActiveConnection> {
-    const dbPath = config.host || ':memory:';
-    const db = new Database(dbPath, { readonly: false });
-    const version = String(db.pragma('compile_options', { simple: true }) || 'unknown');
-
-    return {
-      id: config.id,
-      config,
-      type: 'sqlite',
-      pool: db,
-      serverVersion: version,
-      connectedAt: new Date().toISOString(),
-    };
+    const driver = getDriver(input.type);
+    // 将 input 转换为 StoredConnection 格式（testConnection 只需要连接信息字段）
+    const config = input as StoredConnection;
+    return driver.testConnection(config);
   }
 
   // ==================== 查询辅助 ====================
@@ -342,19 +195,8 @@ export class ConnectionManager {
 
   async getDatabases(connectionId: string): Promise<string[]> {
     const active = this.getActiveConnection(connectionId);
-
-    if (active.type === 'mysql') {
-      const pool = active.pool as mysql.Pool;
-      const [rows] = await pool.query('SHOW DATABASES');
-      return (rows as any[]).map(r => Object.values(r)[0] as string);
-    } else if (active.type === 'postgresql') {
-      const pool = active.pool as pg.Pool;
-      const res = await pool.query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname");
-      return res.rows.map((r: any) => r.datname);
-    } else if (active.type === 'sqlite') {
-      return ['main'];
-    }
-    return [];
+    const driver = getDriver(active.config.type);
+    return driver.getDatabases(active.pool);
   }
 
   // ==================== 辅助方法 ====================

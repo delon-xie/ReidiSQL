@@ -1,29 +1,54 @@
 /**
- * SQL 编辑器 — Monaco Editor 封装
+ * SQL 编辑器 — Monaco Editor 封装 (Sprint 5: +theme, +history, +completion)
  */
 
-import React, { useRef, useCallback } from 'react';
-import { Button, Spin, Alert } from 'antd';
-import { PlayCircleOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
+import { Button, Spin, Alert, Drawer, List, Typography, Empty, Tooltip } from 'antd';
+import { PlayCircleOutlined, PlusOutlined, CloseOutlined, HistoryOutlined } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import type { editor as MonacoEditor } from 'monaco-editor';
 import { useQueryStore } from '@/stores/queryStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useLogStore } from '@/stores/logStore';
+import { registerSQLCompletion, updateCompletionData, setMonacoRef } from '@/utils/sqlCompletion';
+import { useObjectTreeStore } from '@/stores/objectTreeStore';
 
-const SQLEditor: React.FC = () => {
+const { Text } = Typography;
+
+interface SQLEditorProps {
+  isDark?: boolean;
+}
+
+const SQLEditor: React.FC<SQLEditorProps> = ({ isDark = false }) => {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
-  const { tabs, activeTabId, setActiveTab, closeTab, addTab, updateTabSQL, executeQuery } = useQueryStore();
+  const { tabs, activeTabId, setActiveTab, closeTab, addTab, updateTabSQL, executeQuery, history, fetchHistory } = useQueryStore();
   const { activeConnectionId } = useConnectionStore();
   const { addMessage } = useLogStore();
+  const { treeData } = useObjectTreeStore();
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
 
   const activeTab = tabs.find(t => t.id === activeTabId);
   const sql = activeTab?.sql || '';
   const executing = activeTab?.executing || false;
   const error = activeTab?.error;
 
-  const handleEditorMount = useCallback((editor: MonacoEditor.IStandaloneCodeEditor) => {
+  // 更新补全数据源
+  useEffect(() => {
+    updateCompletionData(treeData);
+  }, [treeData]);
+
+  const handleEditorMount = useCallback((editor: MonacoEditor.IStandaloneCodeEditor, monacoInstance: any) => {
     editorRef.current = editor;
+
+    // 保存 monaco 引用供补全使用
+    setMonacoRef(monacoInstance);
+
+    // 注册 SQL 补全
+    if (!completionDisposableRef.current) {
+      completionDisposableRef.current = registerSQLCompletion();
+    }
 
     // 添加 Ctrl+Enter 快捷键执行查询
     editor.addCommand(
@@ -59,6 +84,18 @@ const SQLEditor: React.FC = () => {
     await executeQuery(activeConnectionId);
   }, [activeConnectionId, activeTabId, executeQuery, updateTabSQL, sql, addMessage]);
 
+  const handleOpenHistory = useCallback(() => {
+    if (activeConnectionId) {
+      fetchHistory(activeConnectionId);
+    }
+    setHistoryOpen(true);
+  }, [activeConnectionId, fetchHistory]);
+
+  const handleHistorySelect = useCallback((sqlText: string) => {
+    updateTabSQL(activeTabId, sqlText);
+    setHistoryOpen(false);
+  }, [activeTabId, updateTabSQL]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Tab 栏 */}
@@ -91,8 +128,16 @@ const SQLEditor: React.FC = () => {
         ))}
         <Button type="text" size="small" icon={<PlusOutlined />} onClick={() => addTab()} />
 
-        {/* 执行按钮 */}
-        <div style={{ marginLeft: 'auto' }}>
+        {/* 执行按钮 + 历史 */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          <Tooltip title="查询历史">
+            <Button
+              size="small"
+              icon={<HistoryOutlined />}
+              onClick={handleOpenHistory}
+              disabled={!activeConnectionId}
+            />
+          </Tooltip>
           <Button
             type="primary"
             icon={<PlayCircleOutlined />}
@@ -111,7 +156,7 @@ const SQLEditor: React.FC = () => {
         <Editor
           height="100%"
           language="sql"
-          theme="vs-dark"
+          theme={isDark ? 'vs-dark' : 'vs'}
           value={sql}
           onChange={(v) => updateTabSQL(activeTabId, v || '')}
           onMount={handleEditorMount}
@@ -145,6 +190,39 @@ const SQLEditor: React.FC = () => {
           showIcon
         />
       )}
+
+      {/* 查询历史抽屉 */}
+      <Drawer
+        title="查询历史"
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        width={500}
+        destroyOnClose
+      >
+        {history.length === 0 ? (
+          <Empty description="暂无历史记录" />
+        ) : (
+          <List
+            size="small"
+            dataSource={history}
+            renderItem={(item: any) => (
+              <List.Item
+                style={{ cursor: 'pointer' }}
+                onClick={() => handleHistorySelect(item.sql)}
+              >
+                <List.Item.Meta
+                  title={<Text code ellipsis style={{ maxWidth: 440 }}>{item.sql}</Text>}
+                  description={
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {item.executedAt || item.createdAt || ''} | {item.duration ? `${item.duration}ms` : ''}
+                    </Text>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Drawer>
     </div>
   );
 };

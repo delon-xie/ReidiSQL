@@ -7,7 +7,14 @@
 **问题描述**：
 - 现有代码 `dbconnection.pas` 达11,505行，包含所有数据库的统一抽象
 - 使用FireDAC作为数据访问层，强依赖Windows和Delphi生态
-- 支持6种数据库：MySQL/MariaDB、SQL Server、PostgreSQL、SQLite、Interbase、Firebird
+- 支持6种数据库：MySQL/MariaDB、SQL Server、PostgreSQL/CockroachDB、SQLite、Interbase、Firebird
+- 拟扩展支持的数据库（优先支持查询、其他扩展功能待评估、逐步实施）：
+  - 关系型 SQL​： OracleDB​、DuckDb、Access
+  - 文档型 NoSQL​： MongoDB, CouchDB
+  - 时序数据库​： InfluxDB, TimescaleDB, QuestDB
+  - 键值数据库​： Redis, LevelDB
+  - 图数据库（需评估）​： Neo4j, Dgraph
+  - 向量数据库​（需评估）： Pinecone, Qdrant, Weaviate
 - 每种数据库有特定的 `dbstructures.xxx.pas` 文件（如 `dbstructures.mysql.pas` 达102KB）
 
 **核心挑战**：

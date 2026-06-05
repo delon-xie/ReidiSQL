@@ -59,7 +59,7 @@ export class MetadataService {
         column_type AS fullType,
         data_type AS type,
         character_maximum_length AS length,
-        numeric_precision AS precision,
+        numeric_precision AS \`precision\`,
         numeric_scale AS scale,
         is_nullable = 'YES' AS nullable,
         column_default AS default_value,
@@ -83,7 +83,7 @@ export class MetadataService {
     const [rows] = await pool.query(
       `SELECT
         index_name AS name,
-        non_unique = 0 AS unique,
+        non_unique = 0 AS \`unique\`,
         index_type AS type,
         GROUP_CONCAT(column_name ORDER BY seq_in_index) AS columns,
         GROUP_CONCAT(CASE collation WHEN 'A' THEN 'ASC' WHEN 'D' THEN 'DESC' END ORDER BY seq_in_index) AS directions,
@@ -158,13 +158,13 @@ export class MetadataService {
     const [rows] = await pool.query(
       `SELECT
         routine_name AS name,
-        routine_type AS type,
-        dtd_reference AS returns,
+        routine_type AS \`type\`,
+        dtd_reference AS \`returns\`,
         data_access AS dataAccess,
         is_deterministic = 'YES' AS deterministic,
         security_type AS security,
-        routine_comment AS comment,
-        routine_definition AS definition,
+        routine_comment AS \`comment\`,
+        routine_definition AS \`definition\`,
         character_set_client,
         collation_connection
       FROM information_schema.routines
@@ -199,8 +199,8 @@ export class MetadataService {
     const [rows] = await pool.query(
       `SELECT
         trigger_name AS name,
-        event_manipulation AS event,
-        event_object_table AS table,
+        event_manipulation AS \`event\`,
+        event_object_table AS \`table\`,
         action_timing AS timing,
         action_statement AS statement,
         action_orientation AS orientation,
@@ -238,7 +238,7 @@ export class MetadataService {
     return rows as any[];
   }
 
-  /** 获取服务器信息 */
+  /** 获取服务器信息（增强版：含运行统计） */
   async getServerInfo(connectionId: string): Promise<any> {
     const connManager = getConnectionManager();
     const pool = connManager.getMySQLPool(connectionId);
@@ -246,13 +246,40 @@ export class MetadataService {
     const [versionRows] = await pool.query('SELECT VERSION() as version');
     const [charsetRows] = await pool.query("SHOW VARIABLES LIKE 'character_set_server'");
     const [collationRows] = await pool.query("SHOW VARIABLES LIKE 'collation_server'");
-    const [uptimeRows] = await pool.query("SHOW GLOBAL STATUS LIKE 'Uptime'");
+
+    // 运行统计
+    const statsVars = [
+      'Uptime', 'Threads_connected', 'Threads_running',
+      'Queries', 'Questions', 'Slow_queries',
+      'Bytes_received', 'Bytes_sent', 'Connections',
+      'Aborted_clients', 'Aborted_connects',
+    ];
+    const [statusRows] = await pool.query(
+      `SHOW GLOBAL STATUS WHERE Variable_name IN (${statsVars.map(() => '?').join(',')})`,
+      statsVars
+    );
+    const stats: Record<string, string> = {};
+    for (const row of statusRows as any[]) {
+      stats[row.Variable_name] = row.Value;
+    }
 
     return {
       version: (versionRows as any)[0]?.version,
       charset: (charsetRows as any)[0]?.Value,
       collation: (collationRows as any)[0]?.Value,
-      uptime: parseInt((uptimeRows as any)[0]?.Value || '0'),
+      uptime: parseInt(stats['Uptime'] || '0'),
+      stats: {
+        threadsConnected: parseInt(stats['Threads_connected'] || '0'),
+        threadsRunning: parseInt(stats['Threads_running'] || '0'),
+        queries: parseInt(stats['Queries'] || '0'),
+        questions: parseInt(stats['Questions'] || '0'),
+        slowQueries: parseInt(stats['Slow_queries'] || '0'),
+        bytesReceived: parseInt(stats['Bytes_received'] || '0'),
+        bytesSent: parseInt(stats['Bytes_sent'] || '0'),
+        totalConnections: parseInt(stats['Connections'] || '0'),
+        abortedClients: parseInt(stats['Aborted_clients'] || '0'),
+        abortedConnects: parseInt(stats['Aborted_connects'] || '0'),
+      },
     };
   }
 
@@ -270,11 +297,26 @@ export class MetadataService {
     return (rows as any[]).map(r => ({ name: r.Variable_name, value: r.Value }));
   }
 
+  /** 设置服务器变量 */
+  async setVariable(connectionId: string, name: string, value: string): Promise<void> {
+    const connManager = getConnectionManager();
+    const pool = connManager.getMySQLPool(connectionId);
+    // 使用标识符转义变量名，值用字符串
+    await pool.query(`SET GLOBAL \`${name.replace(/`/g, '``')}\` = ?`, [value]);
+  }
+
   /** 获取服务器进程 */
   async getProcesses(connectionId: string): Promise<any[]> {
     const connManager = getConnectionManager();
     const pool = connManager.getMySQLPool(connectionId);
     const [rows] = await pool.query('SHOW FULL PROCESSLIST');
     return rows as any[];
+  }
+
+  /** 终止服务器进程 */
+  async killProcess(connectionId: string, pid: number): Promise<void> {
+    const connManager = getConnectionManager();
+    const pool = connManager.getMySQLPool(connectionId);
+    await pool.query('KILL ?', [pid]);
   }
 }

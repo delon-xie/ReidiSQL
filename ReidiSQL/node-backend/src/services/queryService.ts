@@ -4,8 +4,17 @@
  */
 
 import mysql from 'mysql2/promise';
+import mysqlCb from 'mysql2';
 import { getConnectionManager } from './connectionService.js';
 import { logger } from '../utils/logger.js';
+
+/** 流式查询事件类型 */
+export type StreamEvent =
+  | { type: 'start'; sql: string; timestamp: number }
+  | { type: 'columns'; columns: Array<{ name: string; type: string; category: string }> }
+  | { type: 'rows'; rows: Record<string, unknown>[]; rowCount: number }
+  | { type: 'end'; rowCount: number; duration: number }
+  | { type: 'error'; error: string };
 
 /** 查询结果 */
 export interface QueryResult {
@@ -136,6 +145,103 @@ export class QueryService {
       items = items.filter(h => h.connectionId === connectionId);
     }
     return items.slice(-limit).reverse();
+  }
+
+  // ==================== 流式查询 ====================
+
+  /**
+   * 流式执行查询（NDJSON 格式）
+   * 适用于大结果集场景，避免一次性返回所有行导致内存溢出
+   * 
+   * @param connectionId 连接 ID
+   * @param sql SQL 语句
+   * @param batchSize 每批发送的行数
+   * @param onRow 行回调（返回 false 则取消）
+   */
+  async executeQueryStream(
+    connectionId: string,
+    sql: string,
+    batchSize: number = 100,
+    onRow: (event: StreamEvent) => boolean | void,
+  ): Promise<{ rowCount: number; duration: number }> {
+    const connManager = getConnectionManager();
+    const connType = connManager.getConnectionType(connectionId);
+    const startTime = Date.now();
+
+    if (connType !== 'mysql') {
+      throw new Error(`Stream query only supports MySQL, got: ${connType}`);
+    }
+
+    const pool = connManager.getMySQLPool(connectionId);
+    // 使用 mysql2 callback API 获取流式支持
+    const poolCb = (pool as any).pool as mysqlCb.Pool;
+    const connCb = await new Promise<mysqlCb.PoolConnection>((resolve, reject) => {
+      poolCb.getConnection((err: Error | null, conn: mysqlCb.PoolConnection) => {
+        if (err) reject(err);
+        else resolve(conn);
+      });
+    });
+
+    try {
+      // 发送 start 事件
+      const metaSent = onRow({ type: 'start', sql, timestamp: Date.now() });
+      if (metaSent === false) {
+        connCb.release();
+        return { rowCount: 0, duration: 0 };
+      }
+
+      let rowCount = 0;
+      let batch: Record<string, unknown>[] = [];
+
+      // mysql2 callback API 的 query 方法返回 Query 对象（可读流）
+      return new Promise((resolve, reject) => {
+        const query = connCb.query({ sql });
+
+        query.on('fields', (fields: any[]) => {
+          const columns = fields.map((f: any) => ({
+            name: f.name,
+            type: mysqlTypeToString(typeof f.type === 'number' ? f.type : 0),
+            category: categorizeType(mysqlTypeToString(typeof f.type === 'number' ? f.type : 0)),
+          }));
+          onRow({ type: 'columns', columns });
+        });
+
+        query.on('result', (row: Record<string, unknown>) => {
+          batch.push(row);
+          rowCount++;
+          if (batch.length >= batchSize) {
+            const cont = onRow({ type: 'rows', rows: batch, rowCount });
+            batch = [];
+            if (cont === false) {
+              connCb.release();
+              resolve({ rowCount, duration: Date.now() - startTime });
+            }
+          }
+        });
+
+        query.on('end', () => {
+          if (batch.length > 0) {
+            onRow({ type: 'rows', rows: batch, rowCount });
+          }
+          connCb.release();
+          const duration = Date.now() - startTime;
+          onRow({ type: 'end', rowCount, duration });
+          this.addHistory(connectionId, sql, duration, rowCount, 'success');
+          resolve({ rowCount, duration });
+        });
+
+        query.on('error', (err: Error) => {
+          connCb.release();
+          const duration = Date.now() - startTime;
+          this.addHistory(connectionId, sql, duration, 0, 'error', err.message);
+          onRow({ type: 'error', error: err.message });
+          reject(err);
+        });
+      });
+    } catch (err: any) {
+      connCb.release();
+      throw err;
+    }
   }
 
   private addHistory(
